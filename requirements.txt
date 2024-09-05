@@ -4,5 +4,5 @@ sorotraj==0.14
 somo @ git+https://github.com/graulem/somo@d65eaf19336898139a5a80a0e5f59d2bedbebfe9
 pytest==6.2.4
 stable-baselines3==1.0
-torch==1.8.1
+
 pyquaternion==0.9.9
