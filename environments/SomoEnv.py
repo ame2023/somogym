@@ -1,3 +1,9 @@
+"""
+SomoEnvクラス修正箇所
+renderメソッドをmode=="human"のみに対応していたのを
+mode=="rgb_array"にも対応するようにした（動画作成のため）
+"""
+
 import os
 import numpy as np
 from copy import deepcopy
@@ -9,7 +15,7 @@ from gym import spaces
 import pybullet as p
 
 from environments.utils.debug_dashboard import Debugger
-
+#from somogym.environments.utils.debug_dashboard import Debugger
 # TODO: major: add ability to have dynamics noise, action noise, disturbances, observation noise
 class SomoEnv(gym.Env):
     def __init__(
@@ -27,6 +33,7 @@ class SomoEnv(gym.Env):
         render=False,
         debug=False,
         manipulator_load_flags=None,
+        render_mode="human", # 追加
     ):
 
         # todo: document
@@ -46,9 +53,10 @@ class SomoEnv(gym.Env):
         self.ep_count = 0
         self.step_count = 0
         self.first_run_done = False
+        self.physics_client = None  # 追加
         self.applied_torque = None
         self.stabilizing = True
-
+        
         # while we're unsure, let's group self. ... assignments in meaningful way but keep them as before
         self.action_time = self.run_config[
             "action_time"
@@ -86,6 +94,8 @@ class SomoEnv(gym.Env):
             self.manipulator_load_flags = [None] * len(
                 manipulator_base_constraints
             )  # there a None into a list of None's for the manipulator flags
+
+        self.render_mode = render_mode  # 追加
 
         self.action_space = spaces.Box(
             low=-1,
@@ -192,7 +202,7 @@ class SomoEnv(gym.Env):
         self.observation_space.seed(seed=seed)
 
     def step(self, action, external_forces=None):
-
+        action = np.clip(np.array(action, dtype=np.float32), self.action_space.low, self.action_space.high)# action_spaceの範囲が[-1,1]に収まっていないことでエラーが出ているため追加
         assert self.action_space.contains(
             action
         ), f"action {action} not in action space"
@@ -400,8 +410,15 @@ class SomoEnv(gym.Env):
 
     # Environments will automatically close() themselves when garbage is collected or when the program exits.
     def close(self):
-        # disconnect pybullet
-        p.disconnect(physicsClientId=self.physics_client)
+        if getattr(self, 'physics_client', None) is not None:
+            try:
+                p.disconnect(physicsClientId=self.physics_client)
+            except Exception as e:
+                print(f"Error disconnecting physics client: {e}")
+        else:
+            print("Warning: physics_client is None, cannot disconnect.")
+
+
         self.first_run_done = (
             False  # (bcs after closing, physics needs to be reinstantiated)
         )
@@ -415,9 +432,44 @@ class SomoEnv(gym.Env):
                 os.remove(manipulator.manipulator_definition.urdf_filename)
 
     def render(self, mode="human", close=False):
-        # todo: we are currently using env.render wrong - fix or document carefully
-        if mode == "human":
-            True
+        if mode == "rgb_array":
+            print("Rendering in rgb_array mode")  # デバッグ用出力
+            # カメラの設定（必要に応じて調整してください）
+            width = 640
+            height = 480
+            view_matrix = p.computeViewMatrixFromYawPitchRoll(
+                cameraTargetPosition=[0, 0, 0],  # ターゲット位置
+                distance=10,                        # カメラの距離
+                yaw=50,                            # ヨー角
+                pitch=-35,                         # ピッチ角
+                roll=0,                            # ロール角
+                upAxisIndex=2                      # 上方向の軸
+            )
+            projection_matrix = p.computeProjectionMatrixFOV(
+                fov=60,                            # 視野角
+                aspect=width / height,             # アスペクト比
+                nearVal=0.1,                       # ニアクリップ面
+                farVal=100.0                       # ファークリップ面
+            )
+            # カメラ画像の取得
+            (_, _, px, _, _) = p.getCameraImage(
+                width=width,
+                height=height,
+                viewMatrix=view_matrix,
+                projectionMatrix=projection_matrix,
+                renderer=p.ER_BULLET_HARDWARE_OPENGL
+            )
+            # 画像データの整形
+            rgb_array = np.array(px, dtype=np.uint8).reshape((height, width, 4))
+            rgb_array = rgb_array[:, :, :3]  # RGBAからRGBに変換
+            return rgb_array
+        elif mode == "human":
+            print("Rendering in human mode")  # デバッグ用出力
+            # GUIでのレンダリングが既に行われている場合は何もしない
+            pass
+        else:
+            super(SomoEnv, self).render(mode=mode)
+
 
     def get_cam_settings(self):
 
